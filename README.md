@@ -1,6 +1,10 @@
 # heap-sentry
 HeapSentry is a lightweight Rust library for tracking heap allocations, detecting memory leaks, and identifying unbounded memory growth. It provides real-time metrics and actionable insights with low overhead in production and deeper diagnostics in debug mode.
 
+## Documentation
+
+- **[How It Works](docs/how_it_works.md)** - Detailed explanation of the architecture, algorithms, and internal workings
+
 ## Usage
 
 Add to your `Cargo.toml`:
