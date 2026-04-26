@@ -1,0 +1,12 @@
+[package]
+name = "heap-sentry"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+backtrace = { version = "0.3", optional = true }
+lazy_static = "1.4"
+
+[features]
+default = []
+backtrace = ["dep:backtrace"]
