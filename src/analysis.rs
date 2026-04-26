@@ -81,7 +81,7 @@ fn analyze_and_report(samples: &[Sample], config: &TrackerConfig) {
         let decreasing = recent.windows(2).all(|w| w[1].memory_usage <= w[0].memory_usage);
         if !decreasing {
             output_message(config, "WARN", &format!("Potential memory leak detected: {} bytes not freed", leak_size));
-            output_message(config, "INFO", "Use scoped tracking to identify which parts of your application are leaking.");
+            output_message(config, "INFO", "Use scoped tracking or enable the backtrace feature to pinpoint the leaking code path.");
         }
     }
 
@@ -94,7 +94,7 @@ fn analyze_and_report(samples: &[Sample], config: &TrackerConfig) {
         let rate = growth / time_diff;
         if rate > config.growth_threshold_bytes_per_sec as f64 {
             output_message(config, "WARN", &format!("Unbounded memory growth detected: {:.2} bytes/sec", rate));
-            output_message(config, "INFO", "Use scoped tracking to identify which parts of your application are growing.");
+            output_message(config, "INFO", "Use scoped tracking or enable the backtrace feature to identify which code paths are growing.");
         }
     }
 

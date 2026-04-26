@@ -173,10 +173,10 @@ The library monitors your entire multi-threaded application for:
 
 ```
 [WARN] Potential memory leak detected: 5242880 bytes not freed
-  Use scoped tracking to identify which parts of your application are leaking.
+  Use scoped tracking or enable the backtrace feature to identify which parts of your application are leaking.
 
 [WARN] Unbounded memory growth detected: 1048576.00 bytes/sec
-  Use scoped tracking to identify which parts of your application are growing.
+  Use scoped tracking or enable the backtrace feature to identify which code paths are growing.
 ```
 
 ### Best Practices for Multi-threaded Apps
