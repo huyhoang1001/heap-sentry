@@ -11,7 +11,7 @@ fn main() {
         enable_backtrace: true, // Requires --features backtrace
     };
 
-    init_tracker(config);
+    let _ = init_tracker(config);
 
     println!("Starting backtrace example...");
     println!("This example enables call site tracking.");

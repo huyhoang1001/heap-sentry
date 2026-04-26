@@ -4,7 +4,7 @@ use std::time::Duration;
 
 fn main() {
     // Initialize the tracker with default config
-    init_tracker(TrackerConfig::default());
+    let _ = init_tracker(TrackerConfig::default());
 
     println!("Starting memory tracking example...");
 

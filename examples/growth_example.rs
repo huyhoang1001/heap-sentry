@@ -11,7 +11,7 @@ fn main() {
         enable_backtrace: false,
     };
 
-    init_tracker(config);
+    let _ = init_tracker(config);
 
     println!("Starting growth detection example...");
     println!("This will allocate memory rapidly to trigger growth warnings.");

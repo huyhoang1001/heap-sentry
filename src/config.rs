@@ -1,0 +1,85 @@
+/// Output format for memory reports
+#[derive(Debug, Clone)]
+pub enum OutputFormat {
+    /// Output to stderr (default)
+    Stderr,
+    /// Output structured JSON to stderr
+    JsonStderr,
+    /// Output to a file (not implemented yet)
+    File(String),
+}
+
+/// Configuration for the heap sentry tracker
+#[derive(Debug)]
+pub struct TrackerConfig {
+    /// Sampling interval in milliseconds
+    pub sampling_interval_ms: u64,
+    /// Growth threshold in bytes per second
+    pub growth_threshold_bytes_per_sec: usize,
+    /// Leak threshold in bytes
+    pub leak_threshold_bytes: usize,
+    /// Enable backtrace collection for call sites
+    pub enable_backtrace: bool,
+    /// Output format for reports
+    pub output_format: OutputFormat,
+}
+
+impl Default for TrackerConfig {
+    fn default() -> Self {
+        Self {
+            sampling_interval_ms: 1000,
+            growth_threshold_bytes_per_sec: 1024 * 1024, // 1MB/s
+            leak_threshold_bytes: 10 * 1024 * 1024, // 10MB
+            enable_backtrace: false,
+            output_format: OutputFormat::Stderr,
+        }
+    }
+}
+
+impl TrackerConfig {
+    /// Validate configuration and return a validated config
+    pub fn validate(self) -> Result<Self, String> {
+        if self.sampling_interval_ms == 0 {
+            return Err("sampling_interval_ms must be greater than 0".to_string());
+        }
+        if self.sampling_interval_ms > 3600000 { // 1 hour
+            return Err("sampling_interval_ms should be less than 3600000 (1 hour)".to_string());
+        }
+        if self.growth_threshold_bytes_per_sec == 0 {
+            return Err("growth_threshold_bytes_per_sec must be greater than 0".to_string());
+        }
+        if self.leak_threshold_bytes == 0 {
+            return Err("leak_threshold_bytes must be greater than 0".to_string());
+        }
+        // Validate output format
+        match &self.output_format {
+            OutputFormat::File(path) if path.is_empty() => {
+                return Err("file path cannot be empty".to_string());
+            }
+            _ => {} // Other formats are valid
+        }
+        Ok(self)
+    }
+
+    /// Create a debug configuration with more sensitive settings
+    pub fn debug() -> Self {
+        Self {
+            sampling_interval_ms: 500,
+            growth_threshold_bytes_per_sec: 100 * 1024, // 100KB/s
+            leak_threshold_bytes: 1024 * 1024, // 1MB
+            enable_backtrace: true,
+            output_format: OutputFormat::Stderr,
+        }
+    }
+
+    /// Create a production configuration with conservative settings
+    pub fn production() -> Self {
+        Self {
+            sampling_interval_ms: 5000, // Less frequent sampling
+            growth_threshold_bytes_per_sec: 10 * 1024 * 1024, // 10MB/s
+            leak_threshold_bytes: 100 * 1024 * 1024, // 100MB
+            enable_backtrace: false, // Disable for performance
+            output_format: OutputFormat::Stderr,
+        }
+    }
+}

@@ -2,32 +2,22 @@
 
 Heap Sentry is a lightweight Rust library that detects memory leaks and monitors unbounded memory growth in real-time. This document explains the internal workings, algorithms, and design decisions.
 
-## Architecture Overview
+## Modular Architecture
 
-```
-┌─────────────────┐
-│   User Application │
-└─────────┬───────┘
-          │
-          v
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│ Global Allocator │ -> │   Metrics       │ -> │   Analyzer      │
-│   Wrapper        │    │   Collector     │    │   Engine        │
-└─────────────────┘    └─────────────────┘    └─────────────────┘
-          │                       │                       │
-          └───────────────────────┼───────────────────────┘
-                                  v
-                         ┌─────────────────┐
-                         │   Reporter      │
-                         │   (stderr)      │
-                         └─────────────────┘
-```
+The codebase is organized into focused modules:
+
+- **`config.rs`**: Configuration structures and validation
+- **`metrics.rs`**: Global metrics storage and statistics collection
+- **`allocator.rs`**: Global allocator wrapper implementation
+- **`analysis.rs`**: Background sampling and analysis algorithms
+- **`scope.rs`**: Scoped memory tracking functionality
+- **`lib.rs`**: Public API re-exports
 
 ## 1. Global Allocator Wrapper
 
 ### How It Works
 
-Heap Sentry installs itself as Rust's global allocator using the `#[global_allocator]` attribute. Every memory allocation and deallocation in the program goes through this wrapper.
+Heap Sentry installs itself as Rust's global allocator using the `#[global_allocator]` attribute (see `allocator.rs`). Every memory allocation and deallocation in the program goes through this wrapper.
 
 ```rust
 #[global_allocator]
@@ -66,11 +56,11 @@ unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
 
 ### Thread-Safe Storage
 
-All metrics use `AtomicUsize` for lock-free, thread-safe updates:
+All metrics use `AtomicUsize` for lock-free, thread-safe updates (see `metrics.rs`):
 
 ```rust
 lazy_static! {
-    static ref METRICS: Metrics = Metrics {
+    pub static ref METRICS: Metrics = Metrics {
         total_allocated: AtomicUsize::new(0),
         total_freed: AtomicUsize::new(0),
         current_usage: AtomicUsize::new(0),
@@ -91,7 +81,7 @@ lazy_static! {
 
 ### Background Monitoring
 
-When `init_tracker()` is called, a background thread starts:
+When `init_tracker()` is called (see `analysis.rs`), a background thread starts:
 
 ```rust
 thread::spawn(move || {
