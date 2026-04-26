@@ -56,6 +56,45 @@ impl Default for TrackerConfig {
     }
 }
 
+impl TrackerConfig {
+    /// Validate configuration and return a validated config
+    pub fn validate(self) -> Result<Self, String> {
+        if self.sampling_interval_ms == 0 {
+            return Err("sampling_interval_ms must be greater than 0".to_string());
+        }
+        if self.sampling_interval_ms > 3600000 { // 1 hour
+            return Err("sampling_interval_ms should be less than 3600000 (1 hour)".to_string());
+        }
+        if self.growth_threshold_bytes_per_sec == 0 {
+            return Err("growth_threshold_bytes_per_sec must be greater than 0".to_string());
+        }
+        if self.leak_threshold_bytes == 0 {
+            return Err("leak_threshold_bytes must be greater than 0".to_string());
+        }
+        Ok(self)
+    }
+
+    /// Create a debug configuration with more sensitive settings
+    pub fn debug() -> Self {
+        Self {
+            sampling_interval_ms: 500,
+            growth_threshold_bytes_per_sec: 100 * 1024, // 100KB/s
+            leak_threshold_bytes: 1024 * 1024, // 1MB
+            enable_backtrace: true,
+        }
+    }
+
+    /// Create a production configuration with conservative settings
+    pub fn production() -> Self {
+        Self {
+            sampling_interval_ms: 5000, // Less frequent sampling
+            growth_threshold_bytes_per_sec: 10 * 1024 * 1024, // 10MB/s
+            leak_threshold_bytes: 100 * 1024 * 1024, // 100MB
+            enable_backtrace: false, // Disable for performance
+        }
+    }
+}
+
 struct AllocationStats {
     allocated: usize, // Total bytes allocated from this call site
     count: usize,     // Number of allocations from this call site
@@ -153,7 +192,12 @@ static ENABLE_BACKTRACE: AtomicUsize = AtomicUsize::new(0);
 
 /// Initialize the heap sentry tracker with the given configuration.
 /// This starts a background thread that monitors memory usage.
-pub fn init_tracker(config: TrackerConfig) {
+///
+/// # Errors
+///
+/// Returns an error if the configuration is invalid.
+pub fn init_tracker(config: TrackerConfig) -> Result<(), String> {
+    let config = config.validate()?;
     ENABLE_BACKTRACE.store(config.enable_backtrace as usize, Ordering::Relaxed);
     // Start sampling thread
     thread::spawn(move || {
@@ -175,6 +219,7 @@ pub fn init_tracker(config: TrackerConfig) {
             analyze_and_report(&samples, &config);
         }
     });
+    Ok(())
 }
 
 #[derive(Clone)]
@@ -250,4 +295,68 @@ pub struct MemoryStats {
     pub allocation_count: usize,
     /// Total number of deallocation operations
     pub deallocation_count: usize,
+}
+
+/// Scoped memory tracking guard
+pub struct MemoryScope {
+    name: String,
+    start_stats: MemoryStats,
+}
+
+impl MemoryScope {
+    /// Create a new memory scope with the given name
+    pub fn new(name: impl Into<String>) -> Self {
+        let name = name.into();
+        let start_stats = snapshot();
+        Self { name, start_stats }
+    }
+
+    /// Get memory statistics for this scope
+    pub fn stats(&self) -> ScopedStats {
+        let current = snapshot();
+        ScopedStats {
+            name: self.name.clone(),
+            allocated: current.total_allocated - self.start_stats.total_allocated,
+            freed: current.total_freed - self.start_stats.total_freed,
+            peak_usage: 0, // TODO: Track peak usage
+            allocation_count: current.allocation_count - self.start_stats.allocation_count,
+            deallocation_count: current.deallocation_count - self.start_stats.deallocation_count,
+        }
+    }
+}
+
+impl Drop for MemoryScope {
+    fn drop(&mut self) {
+        let stats = self.stats();
+        if stats.allocated > 1024 * 1024 { // Only report if > 1MB allocated
+            eprintln!("[INFO] Memory scope '{}' completed: {} bytes allocated, {} bytes net",
+                     stats.name, stats.allocated, stats.allocated as i64 - stats.freed as i64);
+        }
+    }
+}
+
+/// Statistics for a memory scope
+#[derive(Debug)]
+pub struct ScopedStats {
+    /// Scope name
+    pub name: String,
+    /// Total bytes allocated in this scope
+    pub allocated: usize,
+    /// Total bytes freed in this scope
+    pub freed: usize,
+    /// Peak memory usage in this scope
+    pub peak_usage: usize,
+    /// Number of allocations in this scope
+    pub allocation_count: usize,
+    /// Number of deallocations in this scope
+    pub deallocation_count: usize,
+}
+
+/// Macro for scoped memory tracking
+#[macro_export]
+macro_rules! track_scope {
+    ($name:expr, $code:block) => {{
+        let _scope = $crate::MemoryScope::new($name);
+        $code
+    }};
 }

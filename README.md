@@ -20,7 +20,7 @@ In your code:
 use heap_sentry::{init_tracker, TrackerConfig};
 
 fn main() {
-    init_tracker(TrackerConfig::default());
+    init_tracker(TrackerConfig::default())?;
 
     loop {
         let data = vec![0u8; 1024 * 1024]; // simulate allocation
@@ -29,9 +29,47 @@ fn main() {
 }
 ```
 
-The library will automatically track allocations and report warnings to stderr.
+## Scoped Tracking
+
+Track memory usage for specific code blocks:
+
+```rust
+use heap_sentry::{MemoryScope, track_scope};
+
+fn main() {
+    init_tracker(TrackerConfig::default())?;
+
+    // Manual scope tracking
+    {
+        let _scope = MemoryScope::new("my_operation");
+        let data = vec![0u8; 1024 * 1024];
+        // Memory allocated here is tracked
+    }
+
+    // Macro-based scope tracking
+    track_scope!("another_operation", {
+        let data = vec![0u8; 512 * 1024];
+        // Memory allocated here is tracked
+    });
+}
+```
 
 ## Configuration
+
+### Built-in Configurations
+
+```rust
+// Default configuration
+let config = TrackerConfig::default();
+
+// Debug mode: More sensitive, enables backtraces
+let config = TrackerConfig::debug();
+
+// Production mode: Conservative settings
+let config = TrackerConfig::production();
+```
+
+### Custom Configuration
 
 ```rust
 let config = TrackerConfig {
@@ -39,7 +77,7 @@ let config = TrackerConfig {
     growth_threshold_bytes_per_sec: 1024 * 1024,
     leak_threshold_bytes: 10 * 1024 * 1024,
     enable_backtrace: false,
-};
+}.validate()?;
 ```
 
 ## Running the Examples
@@ -50,14 +88,15 @@ To see the library in action, run the included examples:
 # Basic leak detection
 cargo run --example leak_example
 
-# Growth rate detection with custom config
+# Growth rate detection
 cargo run --example growth_example
+
+# Scoped memory tracking
+cargo run --example scoped_example
 
 # Call site tracking (requires backtrace feature)
 cargo run --example backtrace_example --features backtrace
 ```
-
-These examples demonstrate different aspects of memory monitoring.
 
 ## Features
 
