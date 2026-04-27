@@ -61,6 +61,45 @@ impl TrackerConfig {
         Ok(self)
     }
 
+    /// Create configuration from environment variables
+    /// Supports: HEAP_SENTRY_MODE, HEAP_SENTRY_INTERVAL, HEAP_SENTRY_GROWTH_THRESHOLD, HEAP_SENTRY_LEAK_THRESHOLD
+    pub fn from_env() -> Result<Self, String> {
+        let mut config = Self::default();
+
+        // Check for mode override
+        if let Ok(mode) = std::env::var("HEAP_SENTRY_MODE") {
+            match mode.to_lowercase().as_str() {
+                "debug" => config = Self::debug(),
+                "production" => config = Self::production(),
+                "development" => config = Self::debug(),
+                _ => return Err(format!("Unknown HEAP_SENTRY_MODE: {}. Use 'debug' or 'production'", mode)),
+            }
+        }
+
+        // Override individual settings if specified
+        if let Ok(interval) = std::env::var("HEAP_SENTRY_INTERVAL") {
+            config.sampling_interval_ms = interval.parse()
+                .map_err(|_| format!("Invalid HEAP_SENTRY_INTERVAL: {}", interval))?;
+        }
+
+        if let Ok(growth) = std::env::var("HEAP_SENTRY_GROWTH_THRESHOLD") {
+            config.growth_threshold_bytes_per_sec = growth.parse()
+                .map_err(|_| format!("Invalid HEAP_SENTRY_GROWTH_THRESHOLD: {}", growth))?;
+        }
+
+        if let Ok(leak) = std::env::var("HEAP_SENTRY_LEAK_THRESHOLD") {
+            config.leak_threshold_bytes = leak.parse()
+                .map_err(|_| format!("Invalid HEAP_SENTRY_LEAK_THRESHOLD: {}", leak))?;
+        }
+
+        config.validate()
+    }
+
+    /// Zero-config initialization - uses environment variables or defaults
+    pub fn auto() -> Self {
+        Self::from_env().unwrap_or_else(|_| Self::default())
+    }
+
     /// Create a debug configuration with more sensitive settings
     pub fn debug() -> Self {
         Self {

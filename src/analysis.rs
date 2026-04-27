@@ -64,6 +64,18 @@ pub fn init_tracker(config: TrackerConfig) -> Result<(), String> {
     Ok(())
 }
 
+/// Initialize heap sentry with automatic configuration.
+/// Uses environment variables if available, otherwise defaults.
+/// This is the recommended way to initialize heap sentry for most use cases.
+///
+/// # Errors
+///
+/// Returns an error if the auto-configuration fails.
+pub fn init() -> Result<(), String> {
+    let config = crate::config::TrackerConfig::auto();
+    init_tracker(config)
+}
+
 /// Analyze samples and report issues
 fn analyze_and_report(samples: &[Sample], config: &TrackerConfig) {
     if samples.len() < 2 {

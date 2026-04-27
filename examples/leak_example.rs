@@ -1,10 +1,10 @@
-use heap_sentry::{init_tracker, TrackerConfig};
+use heap_sentry::init;
 use std::thread;
 use std::time::Duration;
 
 fn main() {
-    // Initialize the tracker with default config
-    let _ = init_tracker(TrackerConfig::default());
+    // Initialize the tracker with automatic configuration
+    let _ = init();
 
     println!("Starting memory tracking example...");
 

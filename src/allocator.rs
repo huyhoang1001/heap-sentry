@@ -8,17 +8,17 @@ use backtrace::Backtrace;
 
 pub static ENABLE_BACKTRACE: AtomicUsize = AtomicUsize::new(0);
 
-/// Global allocator that wraps the system allocator and tracks allocations
-pub struct TrackingAllocator {
-    system: System,
+/// Generic allocator wrapper that tracks allocations for any underlying allocator
+pub struct TrackingAllocator<A: GlobalAlloc> {
+    inner: A,
 }
 
-#[global_allocator]
-static ALLOCATOR: TrackingAllocator = TrackingAllocator {
-    system: System,
-};
+impl<A: GlobalAlloc> TrackingAllocator<A> {
+    /// Create a new tracking allocator wrapping the given allocator
+    pub const fn new(inner: A) -> Self {
+        Self { inner }
+    }
 
-impl TrackingAllocator {
     /// Track an allocation
     fn track_alloc(&self, size: usize) {
         METRICS.total_allocated.fetch_add(size, Ordering::Relaxed);
@@ -45,9 +45,9 @@ impl TrackingAllocator {
     }
 }
 
-unsafe impl GlobalAlloc for TrackingAllocator {
+unsafe impl<A: GlobalAlloc> GlobalAlloc for TrackingAllocator<A> {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        let ptr = self.system.alloc(layout);
+        let ptr = self.inner.alloc(layout);
         if !ptr.is_null() {
             self.track_alloc(layout.size());
         }
@@ -55,12 +55,12 @@ unsafe impl GlobalAlloc for TrackingAllocator {
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        self.system.dealloc(ptr, layout);
+        self.inner.dealloc(ptr, layout);
         self.track_dealloc(layout.size());
     }
 
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
-        let ptr = self.system.alloc_zeroed(layout);
+        let ptr = self.inner.alloc_zeroed(layout);
         if !ptr.is_null() {
             self.track_alloc(layout.size());
         }
@@ -69,7 +69,7 @@ unsafe impl GlobalAlloc for TrackingAllocator {
 
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
         let old_size = layout.size();
-        let new_ptr = self.system.realloc(ptr, layout, new_size);
+        let new_ptr = self.inner.realloc(ptr, layout, new_size);
         if !new_ptr.is_null() {
             self.track_dealloc(old_size);
             self.track_alloc(new_size);
@@ -77,3 +77,19 @@ unsafe impl GlobalAlloc for TrackingAllocator {
         new_ptr
     }
 }
+
+// Pre-built allocator types for common use cases
+/// Tracking allocator using the system allocator
+pub type TrackingSystem = TrackingAllocator<System>;
+
+#[cfg(feature = "jemalloc")]
+/// Tracking allocator using jemalloc (when jemalloc feature is enabled)
+pub type TrackingJemalloc = TrackingAllocator<jemallocator::Jemalloc>;
+
+#[cfg(feature = "mimalloc")]
+/// Tracking allocator using mimalloc (when mimalloc feature is enabled)
+pub type TrackingMimalloc = TrackingAllocator<mimalloc::MiMalloc>;
+
+// Default global allocator using system allocator
+#[global_allocator]
+static ALLOCATOR: TrackingSystem = TrackingSystem::new(System);

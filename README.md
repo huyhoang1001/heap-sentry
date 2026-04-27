@@ -28,11 +28,12 @@ heap-sentry = "0.1"
 Basic usage:
 
 ```rust
-use heap_sentry::{init_tracker, TrackerConfig};
+use heap_sentry::init;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Initialize with default configuration
-    init_tracker(TrackerConfig::default())?;
+    // Initialize with automatic configuration
+    // Uses environment variables if available, otherwise sensible defaults
+    init()?;
 
     // Your application code here
     loop {
@@ -44,7 +45,46 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
+For custom configuration:
+
+```rust
+use heap_sentry::{init_tracker, TrackerConfig};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Initialize with custom configuration
+    let config = TrackerConfig {
+        sampling_interval_ms: 1000,
+        growth_threshold_bytes_per_sec: 1024 * 1024, // 1MB/s
+        leak_threshold_bytes: 50 * 1024 * 1024, // 50MB
+        enable_backtrace: false,
+        output_format: heap_sentry::config::OutputFormat::Stderr,
+    };
+    init_tracker(config)?;
+
+    // Your application code here
+    Ok(())
+}
+```
+
 The library will automatically detect memory leaks and unbounded growth, reporting warnings to stderr.
+
+## Environment Variables
+
+Heap Sentry supports configuration via environment variables for easy deployment:
+
+- `HEAP_SENTRY_MODE`: Set to `debug` for sensitive detection (faster sampling, lower thresholds) or `production` for conservative monitoring
+- `HEAP_SENTRY_INTERVAL`: Sampling interval in milliseconds (default: 5000)
+- `HEAP_SENTRY_GROWTH_THRESHOLD`: Growth rate threshold in bytes per second (default: 1048576 = 1MB/s)
+- `HEAP_SENTRY_LEAK_THRESHOLD`: Leak detection threshold in bytes (default: 104857600 = 100MB)
+- `HEAP_SENTRY_BACKTRACE`: Set to `1` to enable backtrace collection (requires `backtrace` feature)
+- `HEAP_SENTRY_OUTPUT`: Output format - `stderr` (default) or `json`
+
+Example:
+```bash
+export HEAP_SENTRY_MODE=debug
+export HEAP_SENTRY_INTERVAL=1000
+./your_application
+```
 
 ## Scoped Tracking
 

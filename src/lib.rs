@@ -29,5 +29,12 @@ pub mod scope;
 // Re-export public API
 pub use config::TrackerConfig;
 pub use metrics::{snapshot, MemoryStats, ThreadMemoryStats, thread_stats, current_thread_stats};
-pub use analysis::init_tracker;
+pub use analysis::{init_tracker, init};
 pub use scope::{MemoryScope, ScopedStats};
+pub use allocator::{TrackingAllocator, TrackingSystem};
+
+// Re-export optional allocator types
+#[cfg(feature = "jemalloc")]
+pub use allocator::TrackingJemalloc;
+#[cfg(feature = "mimalloc")]
+pub use allocator::TrackingMimalloc;
