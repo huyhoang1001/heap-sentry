@@ -1,6 +1,8 @@
+use std::collections::HashMap;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, PoisonError};
-use std::collections::HashMap;
 
 use lazy_static::lazy_static;
 
@@ -35,7 +37,6 @@ impl<T> SafeMutex<T> {
         match self.mutex.lock() {
             Ok(guard) => Ok(guard),
             Err(PoisonError { .. }) => {
-                // Log the poisoning but continue with recovered mutex
                 #[cfg(feature = "tracing")]
                 warn!("Metrics mutex was poisoned, recovering...");
                 eprintln!("[WARN] Metrics mutex was poisoned, recovering...");
@@ -48,16 +49,36 @@ impl<T> SafeMutex<T> {
     pub fn try_lock(&self) -> Option<std::sync::MutexGuard<T>> {
         match self.mutex.try_lock() {
             Ok(guard) => Some(guard),
-            Err(_) => None, // Either poisoned or would block
+            Err(_) => None,
         }
     }
 }
 
-/// Statistics for allocation call sites
+/// Active allocation metadata for pointer tracking
 #[derive(Debug)]
-pub struct AllocationStats {
-    pub allocated: usize, // Total bytes allocated from this call site
-    pub count: usize,     // Number of allocations from this call site
+pub struct AllocationMeta {
+    pub size: usize,
+    pub stack_id: u64,
+}
+
+/// Aggregated allocation statistics for a stack trace
+#[derive(Debug, Clone)]
+pub struct AllocationStat {
+    pub total_bytes: usize,
+    pub live_bytes: usize,
+    pub alloc_count: usize,
+    pub dealloc_count: usize,
+}
+
+impl AllocationStat {
+    pub fn new() -> Self {
+        Self {
+            total_bytes: 0,
+            live_bytes: 0,
+            alloc_count: 0,
+            dealloc_count: 0,
+        }
+    }
 }
 
 /// Global metrics storage
@@ -68,7 +89,9 @@ pub struct Metrics {
     pub current_usage: AtomicUsize,
     pub allocation_count: AtomicUsize,
     pub deallocation_count: AtomicUsize,
-    pub callsites: SafeMutex<HashMap<String, AllocationStats>>, // Only used with backtrace feature
+    pub active_allocations: SafeMutex<HashMap<usize, AllocationMeta>>,
+    pub stack_traces: SafeMutex<HashMap<u64, String>>,
+    pub allocation_stats: SafeMutex<HashMap<u64, AllocationStat>>,
 }
 
 lazy_static! {
@@ -78,7 +101,9 @@ lazy_static! {
         current_usage: AtomicUsize::new(0),
         allocation_count: AtomicUsize::new(0),
         deallocation_count: AtomicUsize::new(0),
-        callsites: SafeMutex::new(HashMap::new()),
+        active_allocations: SafeMutex::new(HashMap::new()),
+        stack_traces: SafeMutex::new(HashMap::new()),
+        allocation_stats: SafeMutex::new(HashMap::new()),
     };
 }
 
@@ -105,6 +130,79 @@ pub fn snapshot() -> MemoryStats {
         current_usage: METRICS.current_usage.load(Ordering::Relaxed),
         allocation_count: METRICS.allocation_count.load(Ordering::Relaxed),
         deallocation_count: METRICS.deallocation_count.load(Ordering::Relaxed),
+    }
+}
+
+impl Metrics {
+    fn hash_backtrace(backtrace: &str) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        backtrace.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    pub fn record_stack_trace(&self, backtrace: String) -> u64 {
+        let stack_id = Self::hash_backtrace(&backtrace);
+        if let Ok(mut traces) = self.stack_traces.lock() {
+            traces.entry(stack_id).or_insert(backtrace);
+        }
+        stack_id
+    }
+
+    pub fn record_allocation(&self, size: usize, stack_id: u64) {
+        self.total_allocated.fetch_add(size, Ordering::Relaxed);
+        self.allocation_count.fetch_add(1, Ordering::Relaxed);
+        self.current_usage.fetch_add(size, Ordering::Relaxed);
+
+        if stack_id != 0 {
+            if let Ok(mut stats) = self.allocation_stats.lock() {
+                let entry = stats.entry(stack_id).or_insert_with(AllocationStat::new);
+                entry.total_bytes += size;
+                entry.live_bytes += size;
+                entry.alloc_count += 1;
+            }
+        }
+    }
+
+    pub fn record_deallocation(&self, size: usize, stack_id: u64) {
+        self.total_freed.fetch_add(size, Ordering::Relaxed);
+        self.deallocation_count.fetch_add(1, Ordering::Relaxed);
+        self.current_usage.fetch_sub(size, Ordering::Relaxed);
+
+        if stack_id != 0 {
+            if let Ok(mut stats) = self.allocation_stats.lock() {
+                if let Some(entry) = stats.get_mut(&stack_id) {
+                    entry.live_bytes = entry.live_bytes.saturating_sub(size);
+                    entry.dealloc_count += 1;
+                }
+            }
+        }
+    }
+
+    pub fn store_allocation_metadata(&self, ptr: usize, meta: AllocationMeta) {
+        if let Ok(mut allocations) = self.active_allocations.lock() {
+            allocations.insert(ptr, meta);
+        }
+    }
+
+    pub fn take_allocation_metadata(&self, ptr: usize) -> Option<AllocationMeta> {
+        if let Ok(mut allocations) = self.active_allocations.lock() {
+            allocations.remove(&ptr)
+        } else {
+            None
+        }
+    }
+
+    pub fn top_allocation_stats(&self, limit: usize) -> Vec<(u64, AllocationStat, Option<String>)> {
+        let mut items = Vec::new();
+        if let Ok(stats) = self.allocation_stats.lock() {
+            for (stack_id, stat) in stats.iter() {
+                let trace = self.stack_traces.lock().ok().and_then(|traces| traces.get(stack_id).cloned());
+                items.push((*stack_id, stat.clone(), trace));
+            }
+        }
+        items.sort_by(|a, b| b.1.live_bytes.cmp(&a.1.live_bytes));
+        items.truncate(limit);
+        items
     }
 }
 

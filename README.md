@@ -85,6 +85,7 @@ Heap Sentry supports configuration via environment variables for easy deployment
 - `HEAP_SENTRY_GROWTH_THRESHOLD`: Growth rate threshold in bytes per second (default: 1048576 = 1MB/s)
 - `HEAP_SENTRY_LEAK_THRESHOLD`: Leak detection threshold in bytes (default: 104857600 = 100MB)
 - `HEAP_SENTRY_BACKTRACE`: Set to `1` to enable backtrace collection (requires `backtrace` feature)
+- `HEAP_SENTRY_BACKTRACE_SAMPLE_RATE`: Sampling rate for backtrace collection, expressed as `1 in N` allocations (default: 100)
 - `HEAP_SENTRY_OUTPUT`: Output format - `stderr` (default) or `json`
 
 Example:

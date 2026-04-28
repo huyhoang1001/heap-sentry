@@ -20,6 +20,8 @@ pub struct TrackerConfig {
     pub leak_threshold_bytes: usize,
     /// Enable backtrace collection for call sites
     pub enable_backtrace: bool,
+    /// Backtrace sampling rate (1 in N allocations)
+    pub backtrace_sample_rate: usize,
     /// Output format for reports
     pub output_format: OutputFormat,
 }
@@ -31,6 +33,7 @@ impl Default for TrackerConfig {
             growth_threshold_bytes_per_sec: 1024 * 1024, // 1MB/s
             leak_threshold_bytes: 10 * 1024 * 1024, // 10MB
             enable_backtrace: false,
+            backtrace_sample_rate: 100,
             output_format: OutputFormat::Stderr,
         }
     }
@@ -50,6 +53,9 @@ impl TrackerConfig {
         }
         if self.leak_threshold_bytes == 0 {
             return Err("leak_threshold_bytes must be greater than 0".to_string());
+        }
+        if self.backtrace_sample_rate == 0 {
+            return Err("backtrace_sample_rate must be greater than 0".to_string());
         }
         // Validate output format
         match &self.output_format {
@@ -92,6 +98,11 @@ impl TrackerConfig {
                 .map_err(|_| format!("Invalid HEAP_SENTRY_LEAK_THRESHOLD: {}", leak))?;
         }
 
+        if let Ok(sample_rate) = std::env::var("HEAP_SENTRY_BACKTRACE_SAMPLE_RATE") {
+            config.backtrace_sample_rate = sample_rate.parse()
+                .map_err(|_| format!("Invalid HEAP_SENTRY_BACKTRACE_SAMPLE_RATE: {}", sample_rate))?;
+        }
+
         config.validate()
     }
 
@@ -107,6 +118,7 @@ impl TrackerConfig {
             growth_threshold_bytes_per_sec: 100 * 1024, // 100KB/s
             leak_threshold_bytes: 1024 * 1024, // 1MB
             enable_backtrace: true,
+            backtrace_sample_rate: 20,
             output_format: OutputFormat::Stderr,
         }
     }
@@ -118,6 +130,7 @@ impl TrackerConfig {
             growth_threshold_bytes_per_sec: 10 * 1024 * 1024, // 10MB/s
             leak_threshold_bytes: 100 * 1024 * 1024, // 100MB
             enable_backtrace: false, // Disable for performance
+            backtrace_sample_rate: 100,
             output_format: OutputFormat::Stderr,
         }
     }

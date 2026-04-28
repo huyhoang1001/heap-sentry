@@ -1,5 +1,6 @@
 use std::time::{Duration, Instant};
 
+use crate::allocator::BACKTRACE_SAMPLE_RATE;
 use crate::config::TrackerConfig;
 use crate::metrics::METRICS;
 
@@ -66,6 +67,7 @@ pub struct Sample {
 pub fn init_tracker(config: TrackerConfig) -> Result<(), String> {
     let config = config.validate()?;
     super::allocator::ENABLE_BACKTRACE.store(config.enable_backtrace as usize, std::sync::atomic::Ordering::Relaxed);
+    BACKTRACE_SAMPLE_RATE.store(config.backtrace_sample_rate, std::sync::atomic::Ordering::Relaxed);
 
     trace_debug(&format!(
         "initialized heap sentry tracker; interval={}ms enable_backtrace={}",
@@ -155,17 +157,17 @@ fn analyze_and_report(samples: &[Sample], config: &TrackerConfig) {
     // Hotspots
     #[cfg(feature = "backtrace")]
     if config.enable_backtrace {
-        if let Ok(map) = METRICS.callsites.lock() {
-            let mut hotspots: Vec<_> = map.iter().collect();
-            hotspots.sort_by(|a, b| b.1.allocated.cmp(&a.1.allocated));
-            if !hotspots.is_empty() {
-                output_message(config, "INFO", "Top allocation sources:");
-                for (callsite, stats) in hotspots.iter().take(5) {
-                    output_message(config, "INFO", &format!("  - {}: {} bytes ({} allocations)", callsite, stats.allocated, stats.count));
-                }
+        let hotspots = METRICS.top_allocation_stats(5);
+        if !hotspots.is_empty() {
+            output_message(config, "INFO", "Top allocation sources:");
+            for (stack_id, stats, trace) in hotspots {
+                let label = if let Some(trace) = trace {
+                    trace.lines().next().unwrap_or("<stack trace>").to_string()
+                } else {
+                    format!("stack_id={} <no trace>", stack_id)
+                };
+                output_message(config, "INFO", &format!("  - {}: {} bytes live ({} allocs, {} frees)", label, stats.live_bytes, stats.alloc_count, stats.dealloc_count));
             }
-        } else {
-            output_message(config, "WARN", "Could not access callsite data due to mutex poisoning");
         }
     }
 }

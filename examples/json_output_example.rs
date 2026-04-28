@@ -7,6 +7,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         growth_threshold_bytes_per_sec: 100 * 1024, // 100KB/s - sensitive for demo
         leak_threshold_bytes: 1024 * 1024, // 1MB
         enable_backtrace: false,
+        backtrace_sample_rate: 100,
         output_format: OutputFormat::JsonStderr,
     }.validate()?;
 

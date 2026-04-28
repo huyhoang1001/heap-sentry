@@ -1,0 +1,384 @@
+# HeapSentry – Production Readiness Enhancement Plan
+
+## 1. Objective
+
+Upgrade HeapSentry from a functional prototype to a **production-ready, real-world usable library**.
+
+Focus on:
+
+* Compatibility with real systems
+* Low friction integration
+* Actionable diagnostics
+* Reliable (low-noise) detection
+
+---
+
+## 2. Core Principles
+
+* Do not break existing allocator setups
+* Minimize runtime overhead in production
+* Prefer actionable insights over raw data
+* Reduce false positives
+* Integrate with existing observability ecosystems
+
+---
+
+## 3. Allocator Design (Critical)
+
+### Problem
+
+Rust allows only **one global allocator**, causing conflicts with libraries using custom allocators.
+
+### Solution
+
+Implement a **generic allocator wrapper**:
+
+```rust
+pub struct TrackingAllocator<A: GlobalAlloc> {
+        inner: A,
+}
+```
+
+### Requirements
+
+* Wrap any allocator (`System`, jemalloc, mimalloc)
+* Do NOT force a specific allocator
+* Provide prebuilt aliases:
+
+```rust
+type TrackingSystem = TrackingAllocator<System>;
+type TrackingMimalloc = TrackingAllocator<mimalloc::MiMalloc>;
+type TrackingJemalloc = TrackingAllocator<jemallocator::Jemalloc>;
+```
+
+### User Example
+
+```rust
+#[global_allocator]
+static GLOBAL: TrackingAllocator<mimalloc::MiMalloc> =
+    TrackingAllocator { inner: mimalloc::MiMalloc };
+    ```
+
+    ### Documentation Requirement
+
+    * Clearly explain:
+
+      * allocator is compile-time decision
+        * only one global allocator allowed
+          * how to wrap existing allocators
+
+          ---
+
+          ## 4. Observability Integration
+
+          ### 4.1 Tracing Integration
+
+          Integrate with `tracing` ecosystem.
+
+          #### Emit Events:
+
+          * `heap_sentry.growth_detected`
+          * `heap_sentry.leak_suspected`
+          * `heap_sentry.scope_completed`
+
+          #### Include Fields:
+
+          * `bytes`
+          * `growth_rate`
+          * `duration`
+          * `scope_name`
+          * `callsite`
+
+          #### Example
+
+          ```rust
+          tracing::warn!(
+                target: "heap_sentry",
+                    event = "growth_detected",
+                        bytes = growth_bytes,
+                            rate = growth_rate,
+          );
+          ```
+
+          ---
+
+          ### 4.2 Prometheus Metrics
+
+          Expose metrics compatible with Prometheus.
+
+          #### Required Metrics:
+
+          * `heap_sentry_current_bytes`
+          * `heap_sentry_alloc_total`
+          * `heap_sentry_growth_rate_bytes_per_sec`
+          * `heap_sentry_suspected_leak_bytes`
+
+          #### Optional:
+
+          * scope-level metrics
+          * allocation histogram
+
+          ---
+
+          ## 5. Detection Engine Improvements
+
+          ### 5.1 Reduce False Positives
+
+          Implement:
+
+          * Warm-up phase (ignore first N seconds)
+          * Sustained growth requirement (N consecutive samples)
+          * Cool-down detection (cancel alert if memory drops)
+
+          ---
+
+          ### 5.2 Growth Detection
+
+          ```rust
+          growth_rate = (mem_t2 - mem_t1) / duration
+          ```
+
+          Trigger only if:
+
+          * exceeds threshold
+          * sustained over time window
+
+          ---
+
+          ### 5.3 Leak Detection
+
+          Condition:
+
+          * total_allocated - total_freed > threshold
+          * remains stable or increasing over time
+
+          ---
+
+          ### 5.4 Sensitivity Profiles
+
+          Provide presets:
+
+          ```rust
+          TrackerConfig::development()
+          TrackerConfig::production()
+          TrackerConfig::aggressive()
+          ```
+
+          ---
+
+          ## 6. Actionable Reporting
+
+          ### Requirement
+
+          All warnings must include:
+
+          * magnitude
+          * trend duration
+          * suspected sources (if available)
+          * suggested causes
+
+          ### Example Output
+
+          ```
+          [WARN] Unbounded memory growth detected
+            Rate: +1.2MB/s over 45s
+
+            Top suspects:
+              - buffer_pool.rs:88 (+700MB)
+                - kafka_consumer.rs:132 (+300MB)
+
+                Possible causes:
+                  - Unbounded queue
+                    - Missing backpressure
+                      - Growing cache without eviction
+                      ```
+
+                      ---
+
+                      ## 7. Scoped Tracking Enhancements
+
+                      ### Requirements
+
+                      * Support nested scopes
+                      * Aggregate over time
+                      * Rank top memory-heavy scopes
+
+                      ### Example Output
+
+                      ```
+                      Top memory-heavy scopes (last 60s):
+                        - process_batch: +120MB
+                          - deserialize: +80MB
+                          ```
+
+                          ---
+
+                          ## 8. Async Support
+
+                          ### Problem
+
+                          Async workloads obscure memory attribution.
+
+                          ### Solution
+
+                          Provide:
+
+                          #### Option A: Attribute macro
+
+                          ```rust
+                          #[track_memory]
+                          async fn process_batch() { ... }
+                          ```
+
+                          #### Option B (Preferred): tracing integration
+
+                          * Attach allocation data to tracing spans
+                          * Aggregate per-span memory usage
+
+                          ---
+
+                          ## 9. Runtime Modes
+
+                          ### 9.1 Lightweight Mode (Default)
+
+                          * No backtrace
+                          * Minimal overhead
+                          * Safe for production
+
+                          ### 9.2 Debug Mode
+
+                          * Enable backtrace tracking
+                          * Detailed diagnostics
+                          * Higher overhead
+
+                          ### Enforcement
+
+                          * Backtrace must be feature-gated
+                          * No heavy operations in allocation hot path
+
+                          ---
+
+                          ## 10. Configuration Improvements
+
+                          ### 10.1 Environment-Based Config
+
+                          Support:
+
+                          ```
+                          HEAP_SENTRY_MODE=debug
+                          HEAP_SENTRY_INTERVAL=1000
+                          HEAP_SENTRY_GROWTH_THRESHOLD=1048576
+                          ```
+
+                          ---
+
+                          ### 10.2 Zero-Config Initialization
+
+                          ```rust
+                          heap_sentry::init();
+                          ```
+
+                          ---
+
+                          ### 10.3 Feature Flags
+
+                          * `tracing`
+                          * `prometheus`
+                          * `backtrace`
+
+                          ---
+
+                          ## 11. Performance Guarantees
+
+                          ### Requirements
+
+                          * Lock-free hot path (atomics only)
+                          * No allocations inside allocator hooks
+                          * Background thread handles heavy work
+
+                          ---
+
+                          ## 12. Real-World Examples (Required)
+
+                          Add examples:
+
+                          ### 12.1 Kafka Consumer Growth
+
+                          * Scenario: messages buffered faster than processed
+                          * Detection: sustained growth
+                          * Output: warning + cause
+
+                          ---
+
+                          ### 12.2 Cache Without Eviction
+
+                          * Scenario: HashMap grows indefinitely
+                          * Detection: steady increase
+                          * Output: suggestion to add eviction
+
+                          ---
+
+                          ### 12.3 Async Task Explosion
+
+                          * Scenario: uncontrolled task spawning
+                          * Detection: rapid allocation spikes
+                          * Output: concurrency warning
+
+                          ---
+
+                          ## 13. Benchmarking
+
+                          Provide:
+
+                          * allocation overhead (ns/op)
+                          * CPU usage impact
+                          * memory overhead
+
+                          Compare:
+
+                          * baseline vs HeapSentry enabled
+
+                          ---
+
+                          ## 14. Positioning
+
+                          ### Intended Use
+
+                          * Long-running services
+                          * Backend systems
+                          * Streaming / event-driven systems
+
+                          ### Not Intended For
+
+                          * Precise leak debugging
+                          * Short-lived CLI tools
+
+                          ---
+
+                          ## 15. Success Criteria
+
+                          The library is considered production-ready when:
+
+                          * Works with custom allocators
+                          * Integrates with tracing and Prometheus
+                          * Produces low-noise, actionable alerts
+                          * Demonstrates minimal overhead
+                          * Provides real-world examples
+                          * Clearly documents limitations
+
+                          ---
+
+                          ## Final Directive
+
+                          Focus on:
+
+                          > Practical usability in real systems over theoretical completeness.
+
+                          Avoid:
+
+                          * overly complex detection
+                          * high overhead features in default mode
+                          * unclear or noisy outputs
+                          
+          )
+}
