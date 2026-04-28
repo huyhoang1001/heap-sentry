@@ -1,9 +1,6 @@
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
-use std::sync::atomic::AtomicUsize;
-
-#[cfg(feature = "backtrace")]
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::metrics::{AllocationMeta, METRICS};
 
@@ -17,42 +14,44 @@ thread_local! {
 pub static ENABLE_BACKTRACE: AtomicUsize = AtomicUsize::new(0);
 pub static BACKTRACE_SAMPLE_RATE: AtomicUsize = AtomicUsize::new(100);
 
-#[cfg(feature = "backtrace")]
-fn should_sample_backtrace() -> bool {
+// Backpressure state
+
+fn is_at_capacity() -> bool {
+    METRICS.active_allocation_count.load(Ordering::Relaxed) >= crate::metrics::MAX_TRACKED_ALLOCATIONS / 2
+}
+
+fn should_sample_allocation() -> bool {
+    // First check if we're at capacity - if so, don't track
+    if is_at_capacity() {
+        return false;
+    }
+
     let sample_rate = BACKTRACE_SAMPLE_RATE.load(Ordering::Relaxed);
     if sample_rate == 0 {
         return false;
     }
+
     static SAMPLE_COUNTER: AtomicUsize = AtomicUsize::new(0);
     let index = SAMPLE_COUNTER.fetch_add(1, Ordering::Relaxed);
     index % sample_rate == 0
 }
 
-#[cfg(feature = "backtrace")]
 fn capture_stack_id() -> u64 {
-    if ENABLE_BACKTRACE.load(Ordering::Relaxed) != 1 || !should_sample_backtrace() {
-        return 0;
-    }
-
-    let mut stack_id = 0;
-    IN_TRACKING.with(|active| {
-        if active.get() {
-            return;
+    #[cfg(feature = "backtrace")]
+    {
+        if ENABLE_BACKTRACE.load(Ordering::Relaxed) != 1 {
+            return 0;
         }
-        active.set(true);
 
         let bt = Backtrace::new();
         let key = format!("{:?}", bt);
-        stack_id = METRICS.record_stack_trace(key);
+        METRICS.record_stack_trace(key)
+    }
 
-        active.set(false);
-    });
-    stack_id
-}
-
-#[cfg(not(feature = "backtrace"))]
-fn capture_stack_id() -> u64 {
-    0
+    #[cfg(not(feature = "backtrace"))]
+    {
+        0
+    }
 }
 
 /// Generic allocator wrapper that tracks allocations for any underlying allocator
@@ -68,38 +67,40 @@ impl<A: GlobalAlloc> TrackingAllocator<A> {
 
     /// Track an allocation and record metadata for the pointer
     fn track_alloc(&self, ptr: *mut u8, size: usize) {
+        METRICS.record_global_allocation(size);
+        if !should_sample_allocation() {
+            return;
+        }
+
         IN_TRACKING.with(|active| {
             if active.get() {
                 return;
             }
             active.set(true);
 
-            let mut stack_id = capture_stack_id();
-            if stack_id != 0 {
-                let meta = AllocationMeta { size, stack_id };
-                let stored = METRICS.store_allocation_metadata(ptr as usize, meta);
-                if !stored {
-                    stack_id = 0;
-                }
+            let stack_id = capture_stack_id();
+            let meta = AllocationMeta { size, stack_id };
+            let stored = METRICS.store_allocation_metadata(ptr as usize, meta);
+            if stored {
+                METRICS.record_sampled_allocation(size, stack_id);
             }
 
-            METRICS.record_allocation(size, stack_id);
             active.set(false);
         });
     }
 
     /// Track a deallocation and update aggregate statistics
     fn track_dealloc(&self, ptr: *mut u8, size: usize) {
+        METRICS.record_global_deallocation(size);
         IN_TRACKING.with(|active| {
             if active.get() {
                 return;
             }
             active.set(true);
 
-            let metadata = METRICS.take_allocation_metadata(ptr as usize);
-            let dealloc_size = metadata.as_ref().map(|m| m.size).unwrap_or(size);
-            let stack_id = metadata.map(|m| m.stack_id).unwrap_or(0);
-            METRICS.record_deallocation(dealloc_size, stack_id);
+            if let Some(metadata) = METRICS.take_allocation_metadata(ptr as usize) {
+                METRICS.record_sampled_deallocation(metadata.size, metadata.stack_id);
+            }
 
             active.set(false);
         });
@@ -107,6 +108,9 @@ impl<A: GlobalAlloc> TrackingAllocator<A> {
 
     /// Track a realloc operation as a deallocation of the old pointer and allocation of the new pointer
     fn track_realloc(&self, old_ptr: *mut u8, new_ptr: *mut u8, old_size: usize, new_size: usize) {
+        METRICS.record_global_deallocation(old_size);
+        METRICS.record_global_allocation(new_size);
+
         IN_TRACKING.with(|active| {
             if active.get() {
                 return;
@@ -114,19 +118,22 @@ impl<A: GlobalAlloc> TrackingAllocator<A> {
             active.set(true);
 
             let old_meta = METRICS.take_allocation_metadata(old_ptr as usize);
-            let old_dealloc_size = old_meta.as_ref().map(|m| m.size).unwrap_or(old_size);
-            let old_stack_id = old_meta.as_ref().map(|m| m.stack_id).unwrap_or(0);
-            METRICS.record_deallocation(old_dealloc_size, old_stack_id);
-
-            let mut stack_id = old_meta.map(|m| m.stack_id).unwrap_or_else(capture_stack_id);
-            if stack_id != 0 {
+            if let Some(old_meta) = old_meta {
+                METRICS.record_sampled_deallocation(old_meta.size, old_meta.stack_id);
+                let stack_id = old_meta.stack_id;
                 let meta = AllocationMeta { size: new_size, stack_id };
                 let stored = METRICS.store_allocation_metadata(new_ptr as usize, meta);
-                if !stored {
-                    stack_id = 0;
+                if stored {
+                    METRICS.record_sampled_allocation(new_size, stack_id);
+                }
+            } else if should_sample_allocation() {
+                let stack_id = capture_stack_id();
+                let meta = AllocationMeta { size: new_size, stack_id };
+                let stored = METRICS.store_allocation_metadata(new_ptr as usize, meta);
+                if stored {
+                    METRICS.record_sampled_allocation(new_size, stack_id);
                 }
             }
-            METRICS.record_allocation(new_size, stack_id);
 
             active.set(false);
         });

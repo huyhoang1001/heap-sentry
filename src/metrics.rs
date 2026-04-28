@@ -93,6 +93,7 @@ pub struct Metrics {
     pub current_usage: AtomicUsize,
     pub allocation_count: AtomicUsize,
     pub deallocation_count: AtomicUsize,
+    pub active_allocation_count: AtomicUsize,
     pub active_allocations: SafeMutex<HashMap<usize, AllocationMeta>>,
     pub stack_traces: SafeMutex<HashMap<u64, String>>,
     pub allocation_stats: SafeMutex<HashMap<u64, AllocationStat>>,
@@ -105,6 +106,7 @@ lazy_static! {
         current_usage: AtomicUsize::new(0),
         allocation_count: AtomicUsize::new(0),
         deallocation_count: AtomicUsize::new(0),
+        active_allocation_count: AtomicUsize::new(0),
         active_allocations: SafeMutex::new(HashMap::new()),
         stack_traces: SafeMutex::new(HashMap::new()),
         allocation_stats: SafeMutex::new(HashMap::new()),
@@ -159,10 +161,17 @@ impl Metrics {
     }
 
     pub fn record_allocation(&self, size: usize, stack_id: u64) {
+        self.record_global_allocation(size);
+        self.record_sampled_allocation(size, stack_id);
+    }
+
+    pub fn record_global_allocation(&self, size: usize) {
         self.total_allocated.fetch_add(size, Ordering::Relaxed);
         self.allocation_count.fetch_add(1, Ordering::Relaxed);
         self.current_usage.fetch_add(size, Ordering::Relaxed);
+    }
 
+    pub fn record_sampled_allocation(&self, size: usize, stack_id: u64) {
         if stack_id != 0 {
             if let Ok(mut stats) = self.allocation_stats.lock() {
                 if !stats.contains_key(&stack_id) && stats.len() >= MAX_ALLOCATION_STATS {
@@ -177,10 +186,17 @@ impl Metrics {
     }
 
     pub fn record_deallocation(&self, size: usize, stack_id: u64) {
+        self.record_global_deallocation(size);
+        self.record_sampled_deallocation(size, stack_id);
+    }
+
+    pub fn record_global_deallocation(&self, size: usize) {
         self.total_freed.fetch_add(size, Ordering::Relaxed);
         self.deallocation_count.fetch_add(1, Ordering::Relaxed);
         self.current_usage.fetch_sub(size, Ordering::Relaxed);
+    }
 
+    pub fn record_sampled_deallocation(&self, size: usize, stack_id: u64) {
         if stack_id != 0 {
             if let Ok(mut stats) = self.allocation_stats.lock() {
                 if let Some(entry) = stats.get_mut(&stack_id) {
@@ -201,6 +217,7 @@ impl Metrics {
                 return false;
             }
             allocations.insert(ptr, meta);
+            self.active_allocation_count.fetch_add(1, Ordering::Relaxed);
             true
         } else {
             false
@@ -209,7 +226,11 @@ impl Metrics {
 
     pub fn take_allocation_metadata(&self, ptr: usize) -> Option<AllocationMeta> {
         if let Ok(mut allocations) = self.active_allocations.lock() {
-            allocations.remove(&ptr)
+            let result = allocations.remove(&ptr);
+            if result.is_some() {
+                self.active_allocation_count.fetch_sub(1, Ordering::Relaxed);
+            }
+            result
         } else {
             None
         }
