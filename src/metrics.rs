@@ -4,8 +4,8 @@ use std::collections::HashMap;
 
 use lazy_static::lazy_static;
 
-#[cfg(feature = "backtrace")]
-use backtrace::Backtrace;
+#[cfg(feature = "tracing")]
+use tracing::warn;
 
 /// Custom error type for metrics operations
 #[derive(Debug, Clone)]
@@ -36,6 +36,8 @@ impl<T> SafeMutex<T> {
             Ok(guard) => Ok(guard),
             Err(PoisonError { .. }) => {
                 // Log the poisoning but continue with recovered mutex
+                #[cfg(feature = "tracing")]
+                warn!("Metrics mutex was poisoned, recovering...");
                 eprintln!("[WARN] Metrics mutex was poisoned, recovering...");
                 Err(MetricsError::MutexPoisoned)
             }

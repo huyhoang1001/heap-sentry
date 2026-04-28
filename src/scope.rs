@@ -1,5 +1,8 @@
 use crate::metrics::{snapshot, MemoryStats};
 
+#[cfg(feature = "tracing")]
+use tracing::{info, trace};
+
 /// Scoped memory tracking guard
 pub struct MemoryScope {
     name: String,
@@ -10,6 +13,10 @@ impl MemoryScope {
     /// Create a new memory scope with the given name
     pub fn new(name: impl Into<String>) -> Self {
         let name = name.into();
+
+        #[cfg(feature = "tracing")]
+        trace!(scope.name = %name, "entered memory scope");
+
         let start_stats = snapshot();
         Self { name, start_stats }
     }
@@ -32,6 +39,14 @@ impl Drop for MemoryScope {
     fn drop(&mut self) {
         let stats = self.stats();
         if stats.allocated > 1024 * 1024 { // Only report if > 1MB allocated
+            #[cfg(feature = "tracing")]
+            info!(
+                scope.name = %stats.name,
+                allocated = stats.allocated,
+                net = stats.allocated as i64 - stats.freed as i64,
+                "Memory scope completed"
+            );
+
             eprintln!("[INFO] Memory scope '{}' completed: {} bytes allocated, {} bytes net",
                      stats.name, stats.allocated, stats.allocated as i64 - stats.freed as i64);
         }

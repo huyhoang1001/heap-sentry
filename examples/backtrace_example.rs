@@ -9,6 +9,7 @@ fn main() {
         growth_threshold_bytes_per_sec: 1024 * 1024,
         leak_threshold_bytes: 5 * 1024 * 1024,
         enable_backtrace: true, // Requires --features backtrace
+        output_format: heap_sentry::config::OutputFormat::Stderr,
     };
 
     let _ = init_tracker(config);

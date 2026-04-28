@@ -9,6 +9,7 @@ Heap Sentry is a lightweight Rust library for tracking heap allocations, detecti
 - **Scoped Tracking**: Fine-grained memory monitoring for specific code blocks and operations
 - **Multi-threaded Support**: Global memory tracking across complex applications
 - **Call Site Tracking**: Optional backtrace collection to identify allocation hotspots (with `backtrace` feature)
+- **Structured Tracing**: Optional `tracing` integration for event-based diagnostics and internal observability
 - **Low Overhead**: Uses atomic operations and background sampling for minimal performance impact
 
 ## Documentation
@@ -23,6 +24,13 @@ Add to your `Cargo.toml`:
 ```toml
 [dependencies]
 heap-sentry = "0.1"
+```
+
+Enable structured tracing events:
+
+```toml
+[dependencies]
+heap-sentry = { version = "0.1", features = ["tracing"] }
 ```
 
 Basic usage:

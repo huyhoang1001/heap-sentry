@@ -1,10 +1,17 @@
 use std::alloc::{GlobalAlloc, Layout, System};
+#[cfg(feature = "backtrace")]
+use std::cell::Cell;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::metrics::METRICS;
 
 #[cfg(feature = "backtrace")]
 use backtrace::Backtrace;
+
+#[cfg(feature = "backtrace")]
+thread_local! {
+    static BACKTRACE_CAPTURE_ACTIVE: Cell<bool> = Cell::new(false);
+}
 
 pub static ENABLE_BACKTRACE: AtomicUsize = AtomicUsize::new(0);
 
@@ -27,13 +34,22 @@ impl<A: GlobalAlloc> TrackingAllocator<A> {
 
         #[cfg(feature = "backtrace")]
         if ENABLE_BACKTRACE.load(Ordering::Relaxed) == 1 {
-            let bt = Backtrace::new();
-            let key = format!("{:?}", bt);
-            if let Ok(mut map) = METRICS.callsites.lock() {
-                let entry = map.entry(key).or_insert_with(|| crate::metrics::AllocationStats { allocated: 0, count: 0 });
-                entry.allocated += size;
-                entry.count += 1;
-            } // If mutex is poisoned, we skip backtrace tracking but continue
+            BACKTRACE_CAPTURE_ACTIVE.with(|active| {
+                if active.get() {
+                    return;
+                }
+                active.set(true);
+
+                let bt = Backtrace::new();
+                let key = format!("{:?}", bt);
+                if let Ok(mut map) = METRICS.callsites.lock() {
+                    let entry = map.entry(key).or_insert_with(|| crate::metrics::AllocationStats { allocated: 0, count: 0 });
+                    entry.allocated += size;
+                    entry.count += 1;
+                }
+
+                active.set(false);
+            });
         }
     }
 
