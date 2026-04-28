@@ -74,11 +74,16 @@ impl<A: GlobalAlloc> TrackingAllocator<A> {
             }
             active.set(true);
 
-            let stack_id = capture_stack_id();
-            let meta = AllocationMeta { size, stack_id };
-            METRICS.store_allocation_metadata(ptr as usize, meta);
-            METRICS.record_allocation(size, stack_id);
+            let mut stack_id = capture_stack_id();
+            if stack_id != 0 {
+                let meta = AllocationMeta { size, stack_id };
+                let stored = METRICS.store_allocation_metadata(ptr as usize, meta);
+                if !stored {
+                    stack_id = 0;
+                }
+            }
 
+            METRICS.record_allocation(size, stack_id);
             active.set(false);
         });
     }
@@ -113,9 +118,14 @@ impl<A: GlobalAlloc> TrackingAllocator<A> {
             let old_stack_id = old_meta.as_ref().map(|m| m.stack_id).unwrap_or(0);
             METRICS.record_deallocation(old_dealloc_size, old_stack_id);
 
-            let stack_id = old_meta.map(|m| m.stack_id).unwrap_or_else(capture_stack_id);
-            let meta = AllocationMeta { size: new_size, stack_id };
-            METRICS.store_allocation_metadata(new_ptr as usize, meta);
+            let mut stack_id = old_meta.map(|m| m.stack_id).unwrap_or_else(capture_stack_id);
+            if stack_id != 0 {
+                let meta = AllocationMeta { size: new_size, stack_id };
+                let stored = METRICS.store_allocation_metadata(new_ptr as usize, meta);
+                if !stored {
+                    stack_id = 0;
+                }
+            }
             METRICS.record_allocation(new_size, stack_id);
 
             active.set(false);

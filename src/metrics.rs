@@ -191,16 +191,19 @@ impl Metrics {
         }
     }
 
-    pub fn store_allocation_metadata(&self, ptr: usize, meta: AllocationMeta) {
+    pub fn store_allocation_metadata(&self, ptr: usize, meta: AllocationMeta) -> bool {
         if meta.stack_id == 0 {
-            return;
+            return false;
         }
 
         if let Ok(mut allocations) = self.active_allocations.lock() {
             if allocations.len() >= MAX_TRACKED_ALLOCATIONS {
-                return;
+                return false;
             }
             allocations.insert(ptr, meta);
+            true
+        } else {
+            false
         }
     }
 
