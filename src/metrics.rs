@@ -6,6 +6,10 @@ use std::sync::{Mutex, PoisonError};
 
 use lazy_static::lazy_static;
 
+pub const MAX_TRACKED_ALLOCATIONS: usize = 1_000_000;
+pub const MAX_STACK_TRACES: usize = 10_000;
+pub const MAX_ALLOCATION_STATS: usize = 10_000;
+
 #[cfg(feature = "tracing")]
 use tracing::warn;
 
@@ -143,7 +147,13 @@ impl Metrics {
     pub fn record_stack_trace(&self, backtrace: String) -> u64 {
         let stack_id = Self::hash_backtrace(&backtrace);
         if let Ok(mut traces) = self.stack_traces.lock() {
-            traces.entry(stack_id).or_insert(backtrace);
+            if traces.contains_key(&stack_id) {
+                return stack_id;
+            }
+            if traces.len() >= MAX_STACK_TRACES {
+                return 0;
+            }
+            traces.insert(stack_id, backtrace);
         }
         stack_id
     }
@@ -155,6 +165,9 @@ impl Metrics {
 
         if stack_id != 0 {
             if let Ok(mut stats) = self.allocation_stats.lock() {
+                if !stats.contains_key(&stack_id) && stats.len() >= MAX_ALLOCATION_STATS {
+                    return;
+                }
                 let entry = stats.entry(stack_id).or_insert_with(AllocationStat::new);
                 entry.total_bytes += size;
                 entry.live_bytes += size;
@@ -179,7 +192,14 @@ impl Metrics {
     }
 
     pub fn store_allocation_metadata(&self, ptr: usize, meta: AllocationMeta) {
+        if meta.stack_id == 0 {
+            return;
+        }
+
         if let Ok(mut allocations) = self.active_allocations.lock() {
+            if allocations.len() >= MAX_TRACKED_ALLOCATIONS {
+                return;
+            }
             allocations.insert(ptr, meta);
         }
     }
@@ -258,3 +278,4 @@ pub fn current_thread_stats() -> ThreadMemoryStats {
         uptime_seconds: 0,
     }
 }
+
